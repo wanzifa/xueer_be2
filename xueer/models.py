@@ -5,7 +5,7 @@ from itsdangerous import Serializer
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask.ext.login import UserMixin, AnonymousUserMixin
 from . import db, login_manager
-from flask import current_app, url_for
+from flask import current_app, url_for, g
 
 
 class Permission:
@@ -59,12 +59,17 @@ class Role(db.Model):
 
 
 # a secondary table
-UserLike = db.Table(
+UCLike = db.Table(
     'user_like',
     db.Column('user_id', db.Integer, db.ForeignKey('users.id')),
     db.Column('course_id', db.Integer, db.ForeignKey('courses.id'))
 )
 
+UCMLike = db.Table(
+    'user_comment_like',
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id')),
+    db.Column('comment_id', db.Integer, db.ForeignKey('comments.id'))
+)
 
 # a secondary table
 CourseTag = db.Table(
@@ -90,8 +95,14 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(128))
     comments = db.relationship("Comments", backref='users', lazy="dynamic")
     like = db.relationship(
+        'Comments',
+        secondary=UCMLike,
+        backref=db.backref('user', lazy='dynamic'),
+        lazy='dynamic'
+    )
+    like_2 = db.relationship(
         'Courses',
-        secondary=UserLike,
+        secondary=UCLike,
         backref=db.backref('user', lazy='dynamic'),
         lazy='dynamic'
     )
@@ -187,8 +198,7 @@ class Courses(db.Model):
 
     # comment(定义和Comments表的一对多关系)
     comment = db.relationship('Comments', backref='courses')
-
-    # 定义与标签的多对多关系
+        # 定义与标签的多对多关系
     tags = db.relationship(
         "Tags",
         secondary=CourseTag,
@@ -196,21 +206,31 @@ class Courses(db.Model):
         lazy="dynamic"
     )
 
+    @property
+    def liked():
+        if self in g.current_user.like.all():
+            return True
+        return False
+
     def __repr__(self):
         return '<Courses %r>' % self.name
 
     def to_json(self):
         json_courses = {
+            'id': self.id,
             'url': url_for('api.get_course_id', id=self.id, _external=True),
-            'course_name': self.name,
-            'teacher': url_for('api.get_teacher_id', id=self.teacher_id, _external=True),
+            'title': self.name,
+            'teacher': self.teacher.name,
             'introduction': self.introduction,
             'comments': url_for('api.get_comments_id', id=self.id, _external=True),
             'category': self.category.first().name,
             'credit': self.credit,
-            'like_count': len(self.user.all()),
-            'tags': self.tags.all(),
-            'type': self.type.first().name
+            'likes': len(self.user.all()),
+            'like_url': url_for('api.like_add', id=self.id, _external=True),
+            'liked': self.liked,
+            'Tags': self.tags.all(),
+            'cat': self.type.first().name,
+            'comment_url': url_for('api.get_comments_id', id=self.id, _external=True)
         }
         return json_courses
 
@@ -249,6 +269,7 @@ class CourseTypes(db.Model):
 
 class Comments(db.Model):
     # __table_args__ = {'mysql_charset':'utf8'}
+    __tablename__ = 'comments'
     id = db.Column(db.Integer, primary_key=True)
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'))
     # user外键关联到user表的username
@@ -263,12 +284,15 @@ class Comments(db.Model):
 
     def to_json(self):
         json_comments = {
+            'id': self.id,
             'url': url_for('api.get_comments_id', id=self.course_id, _external=True),
-            'user': url_for('api.get_user_id', id=self.user_id, _external=True),
+            'user_name': url_for('api.get_user_id', id=self.user_id, _external=True),
             'course': url_for('api.get_course_id', id=self.course_id, _external=True),
-            'time': self.time,
+            'date': self.time,
             'body': self.body,
-            'is_useful': self.useful
+            'is_useful': self.useful,
+            'likes': len(self.user.all()),
+            'like_url': url_for('api.comment_like_add', id=self.id, _external=True)
         }
         return json_comments
 
@@ -313,3 +337,10 @@ class Tags(db.Model):
 
     def __repr__(self):
         return '<Tags %r>' % self.name
+
+    def to_json(self):
+        json_tag = {
+            'id': self.id,
+            'tag_url': url_for('api.get_tags',  _external=True),
+            'title': self.name
+        }
